@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" type="text/css" href="css/normalize.css" media="all">
+    <link rel="stylesheet" type="text/css" href="css/style.css" media="all">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/3.5.6/d3.min.js" charset="utf-8"></script>
+    <script type="text/javascript" src="js/item-data.js"></script>
+    <script type="text/javascript" src="js/item.js"></script>
+    <title>Warframe Weapon Viewer</title>
+</head>
+<body>
+<svg id="contents" width="900px" height="400px">
+    <g id="primary-weapons" transform="translate(100, 100)">
+        <text>primary weapons</text>
+    </g>
+    <g id="secondary-weapons" transform="translate(300, 100)">
+        <text>secondary weapons</text>
+    </g>
+    <g id="melee-weapons" transform="translate(500, 100)">
+        <text>melee weapons</text>
+    </g>
+    <g id="resources" transform="translate(700, 100)">
+        <text>resources</text>
+    </g>
+</svg>
+<br />
+<input type="text" name="search" onInput="redraw(search(this, items))">
+<pre id="detail"></pre>
+<script>
+    // convert
+    items = [];
+    for (var i = 0; i < itemData.length; i++) {
+        var data = itemData[i];
+        var item = new Item(data);
+        items.push(item);
+    }
+
+
+    var contents = d3.select('#contents');
+    var detail = d3.select('#detail');
+
+    redraw(items);
+
+    function redraw(items) {
+        var primary = items.filter(function (d) {
+            return d.ref.weaponSlot === 'primary';
+        });
+        var secondary = items.filter(function (d) {
+            return d.ref.weaponSlot === 'secondary';
+        });
+        var melee = items.filter(function (d) {
+            return d.ref.weaponSlot === 'melee';
+        });
+        var resource = items.filter(function (d) {
+            return d.ref.type === 'resource';
+        });
+        addItems(contents.select('#primary-weapons'), primary);
+        addItems(contents.select('#secondary-weapons'), secondary);
+        addItems(contents.select('#melee-weapons'), melee);
+        addItems(contents.select('#resources'), resource);
+    }
+
+
+    function addItems(layer, items) {
+        var item = layer.selectAll('.item')
+                .data(items, function(d) {
+                    return d.id;
+                });
+        item.enter().append('text')
+                .attr('class', function(d) {
+                    return 'item ' + d.id;
+                })
+                .attr('dy', '.35em')
+                .text(function(d) {
+                    return d.ref.name;
+                })
+                .on('mouseenter', function(d) {
+                    console.log('mouseenter: ' + d.id);
+                    if(!d.ref.requirements) {
+                        return;
+                    }
+
+                    var itemLinks = [];
+                    var showItems = [];
+                    showItems.push(d);
+
+                    for (var i = 0; i < d.ref.requirements.length; i++) {
+                        var req = d.ref.requirements[i];
+                        var peer = contents.select('.' + req.id)[0][0];
+                        if(!peer) {
+                            continue;
+                        }
+                        showItems.push(req);
+
+                        var selfCTM = getCurrentTransformationMatrix(this);
+                        var peerCTM = getCurrentTransformationMatrix(peer);
+                        if(selfCTM.e < peerCTM.e) {
+                            selfCTM.e += this.getBBox().width;
+                        } else if (selfCTM.e > peerCTM.e) {
+                            peerCTM.e += peer.getBBox().width;
+                        }
+                        itemLinks.push({
+                            source: selfCTM,
+                            target: peerCTM
+                        });
+                    }
+
+                    contents.selectAll('.requirement')
+                            .data(itemLinks)
+                            .enter().append('path')
+                            .attr('class', 'requirement')
+                            .attr('d', function(d) {
+                                var middle;
+                                if(d.source.e === d.target.e) {
+                                    middle = [d.source.e - 30, (d.source.f + d.target.f) / 2];
+                                } else {
+                                    middle = [(d.source.e + d.target.e) / 2, d.source.f];
+                                }
+
+                                return 'M' + [d.source.e, d.source.f]
+                                        + 'Q' + middle + ' ' + [d.target.e, d.target.f];
+                            });
+
+                    d3.selectAll('.item').filter(function(d) {
+                        for (var i = 0; i < showItems.length; i++) {
+                            var item = showItems[i];
+                            if(d.id === item.id) {
+                                return false;
+                            }
+                        }
+                        return true;
+                    }).classed({
+                        'something': true
+                    });
+
+
+                })
+                .on('mouseleave', function(d) {
+                    console.log('mouseleave: ' + d.id);
+                    contents.selectAll('.requirement').remove();
+                    contents.selectAll('.something').classed({
+                        'something': false
+                    });
+                })
+                .on('click', function(d) {
+                    console.log('click: ' + d.id);
+                    detail.text(JSON.stringify(d.ref, null, '  '));
+                })
+                .on('dblclick', function(d) {
+                    console.log('dblclick: ' + d.id);
+                    window.open('http://wikiwiki.jp/warframe/?' + d.ref.name.toUpperCase());
+                });
+        item.
+                transition()
+                .duration(100)
+                .attr('x', 15)
+                .attr('y', function(d, i) { return (i + 1) * 15;} );
+
+
+        item.exit()
+                .transition()
+                .duration(100)
+                .style('opacity', 0)
+                .remove();
+    }
+
+    function getCurrentTransformationMatrix(element) {
+    return element.getScreenCTM()
+                .translate(+element.getAttribute("x"),
+                +element.getAttribute("y"));
+    }
+
+    function search(self, datas) {
+        var queryString = self.value;
+        var query = queryString.trim().toLowerCase();
+        if(query.length === 0) {
+            return datas;
+        }
+
+        var result = [];
+
+        for (var i = 0; i < datas.length; i++) {
+            var d = datas[i];
+            if(d.id.indexOf(query) != -1) {
+                result.push(d);
+                continue;
+            }
+        }
+
+        return result;
+    }
+
+
+</script>
+
+
+</body>
+</html>
